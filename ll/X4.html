@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<style>
+		body {
+			margin: 0;
+		}
+	</style>
+</head>
+
+<body>
+	</script>
+	<script src="https://unpkg.com/pixi.js/dist/browser/pixi.min.js"></script>
+	<script src="https://unpkg.com/@pixi/sound/dist/pixi-sound.js"></script>
+	<script type="module">
+		import * as THREE from 'https://cdn.skypack.dev/three@0.129.0';
+		import { OrbitControls } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/controls/OrbitControls.js';
+		import { RoomEnvironment } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/environments/RoomEnvironment.js';
+		import { EXRLoader } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/loaders/EXRLoader.js';
+		import { GLTFLoader } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/loaders/GLTFLoader.js';
+		import { DRACOLoader } from "https://cdn.skypack.dev/three@0.129.0/examples/jsm/loaders/DRACOLoader"
+
+		import { EffectComposer } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/postprocessing/EffectComposer.js';
+		import { RenderPass } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/postprocessing/RenderPass.js';
+		import { UnrealBloomPass } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/postprocessing/UnrealBloomPass.js';
+		import { ShaderPass } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/postprocessing/ShaderPass.js';
+		import { RGBShiftShader } from 'https://cdn.skypack.dev/three@0.129.0/examples/jsm/shaders/RGBShiftShader.js';
+
+		let app, scene, camera, renderer, controls, renderCamera, clock, clip, actions, activeAction, previousAction;
+		let composer, basePass, bloomPass, rgbShift, stats;
+		let senseObj, mixerA, mixerB;
+		let env_text, env_x, env_y, env_z, env_rota, env_rotb, env_dots, env_scaler, mask, viewport
+		const isMobile = (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent))
+		const mouse = new THREE.Vector2(), raycaster = new THREE.Raycaster();
+		let intersections;
+		const activeGroup = []
+
+		function setup() {
+			console.log('P5.js INIT')
+		}
+
+		init();
+		initPass();
+		render();
+		function init() {
+			//PIXI.sound.add('hitSound', 'https://openseauserdata.com/files/94db243735494b6abcfcc33e93175b57.mp3');
+			scene = new THREE.Scene();
+			//scene.fog = new THREE.FogExp2(0x000000, 0.05);
+			camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+			camera.position.set(25, 2, 0);
+
+			renderer = new THREE.WebGLRenderer();
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.toneMapping = THREE.ACESFilmicToneMapping;
+			renderer.toneMappingExposure = 1;
+			renderer.outputEncoding = THREE.sRGBEncoding;
+			renderer.physicallyCorrectLights = true;
+			renderer.antialias = true;
+			renderer.domElement.style.display = "block";
+			renderer.domElement.style.position = "absolute";
+			document.body.appendChild(renderer.domElement);
+
+			app = new PIXI.Application({ width: window.innerWidth, height: window.innerHeight, transparent: true });
+    		app.renderer.view.style.display = "block";
+			app.renderer.view.style.position = "absolute";
+			document.body.appendChild(app.view);
+
+			controls = new OrbitControls(camera, app.view);
+			controls.minDistance = 25;
+			controls.maxDistance = 25;
+			controls.target.set(0, 0, 0);
+			controls.minPolarAngle = Math.PI / 180 * 90;
+			controls.maxPolarAngle = Math.PI / 180 * 90;
+			controls.enablePan = false;
+			controls.update();
+
+			clock = new THREE.Clock();
+
+			viewport = new PIXI.Container();
+			mask = new PIXI.Graphics();
+			for (let i = 0; i < 30; i++){
+				mask.beginFill(0x000000, 0.08);
+				mask.drawRect(-512, -512 - i*10, 1024, 300);
+				mask.drawRect(-512, 212 + i*10, 1024, 300);
+				mask.endFill();
+			}
+			viewport.addChild(mask)
+			resizePIXI();
+
+			window.addEventListener('resize', function () {
+				renderCamera.aspect = window.innerWidth / window.innerHeight;
+				renderCamera.updateProjectionMatrix();
+				renderer.setSize(window.innerWidth, window.innerHeight);
+				composer.setSize(window.innerWidth, window.innerHeight);
+				resizePIXI();
+			}, false);
+			console.log(isMobile)
+
+			renderCamera = camera;
+		}
+		function resizePIXI(){
+			app.renderer.resize(window.innerWidth, window.innerHeight);
+			mask.scale.set(window.innerWidth / 1024, window.innerHeight / 1024)
+			mask.position.set(app.renderer.width/2, app.renderer.height/2)
+		}
+
+		function initPass() {
+			basePass = new RenderPass(scene, camera);
+			bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+			rgbShift = new ShaderPass(RGBShiftShader);
+			bloomPass.threshold = 0.1;
+			bloomPass.strength = 2;
+			bloomPass.radius = 0.1;
+
+			composer = new EffectComposer(renderer);
+			composer.addPass(basePass);
+			composer.addPass(rgbShift);
+			composer.addPass(bloomPass);
+		}
+
+		function fadeToAction( name, duration ) {
+			previousAction = activeAction;
+			activeAction = actions[ name ];
+			if ( previousAction !== activeAction ) {
+				previousAction.fadeOut( duration );
+			}
+			activeAction
+				.reset()
+				.setEffectiveTimeScale( 1 )
+				.setEffectiveWeight( 1 )
+				.fadeIn( duration )
+				.play();
+		}
+
+		function onPointerMove(event) {
+			mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+			mouse.y = - (event.clientY / window.innerHeight) * 2 + 1;
+		}
+
+		function render() {
+			requestAnimationFrame(render);
+
+			if (env_text) {
+				env_text.rotation.y += 0.005;
+				env_rota.rotation.y -= 0.01;
+				env_rotb.rotation.y -= 0.01;
+				env_dots.rotation.y -= 1;
+
+				let doscale = clock.elapsedTime%2;
+				doscale = Math.abs(doscale - 1)*0.1 + 0.9
+				env_scaler.scale.x = doscale
+				//env_scaler.scale.y = doscale
+				env_scaler.scale.z = doscale
+
+			}
+
+			if (senseObj) {
+				senseObj.rotation.y += 0.001;
+				senseObj.rotation.x += 0.0005;
+				spotLight.intensity = Math.max(spotLight.intensity - 15, 30);
+				spotLight2.intensity = Math.max(spotLight2.intensity - 15, 30);
+			}
+
+			bloomPass.strength = Math.abs((clock.elapsedTime%6 - 3))*0.2 + 1.4;
+
+			let delta = clock.getDelta();
+			if (mixerA) mixerA.update(delta);
+			if (mixerB) mixerB.update(delta);
+			if (composer) composer.render();
+			rgbShift.uniforms['amount'].value = Math.max(rgbShift.uniforms['amount'].value -0.0001, 0.001);
+			bloomPass.threshold = Math.min(bloomPass.threshold + 0.005 , 0.1);
+			mask.alpha = Math.min(mask.alpha += 0.005, 1);
+
+			raycaster.setFromCamera(mouse, camera);
+			intersections = raycaster.intersectObjects(activeGroup);
+			if (intersections.length > 0) {
+				document.body.style.cursor = 'pointer';
+			} else {
+				document.body.style.cursor = 'auto';
+			}
+			app.renderer.render(viewport);
+		}
+
+		document.addEventListener('click', onClick);
+		document.addEventListener('touchend', onClick);
+    	document.addEventListener('pointermove', onPointerMove);
+
+		function onClick() {
+			event.preventDefault();
+			//if (activeAction.isRunning() === false){
+				if (intersections.length > 0){
+					console.log('click')
+					mask.alpha = 0;
+					//PIXI.sound.play('hitSound');
+					rgbShift.uniforms['amount'].value = (Math.random()+0.5)*0.01
+					bloomPass.threshold = 0.01
+					spotLight.intensity = 1000;
+					spotLight2.intensity = 1000;
+					fadeToAction('Click')
+				}
+			//}
+		}
+
+		//創造ROOM ENV
+		scene.background = new THREE.Color(0x000000);
+
+		const spotLight = new THREE.SpotLight(0x84889A)
+		spotLight.position.set(30, 15, 0)
+		spotLight.target = new THREE.Object3D()
+		spotLight.penumbra = 1;
+		spotLight.intensity = 30;
+		scene.add(spotLight)
+
+		const light = new THREE.AmbientLight( 0x404040 ); // soft white light
+		scene.add( light );
+
+		const spotLight2 = new THREE.SpotLight(0x84889A)
+		spotLight2.position.set(-30, 15, 15)
+		spotLight2.target = new THREE.Object3D()
+		spotLight2.intensity = 30;
+		scene.add(spotLight2)
+
+		//讀取器
+		const dracoLoader = new DRACOLoader();
+		dracoLoader.setDecoderPath("https://cdn.skypack.dev/three@0.129.0/examples/js/draco/gltf/");
+		dracoLoader.setDecoderConfig({ type: "js" });
+		dracoLoader.preload();
+
+		const gltfLoader = new GLTFLoader().setPath('https://openseauserdata.com/files/')
+		//gltfLoader.setPath('models/')
+		gltfLoader.setDRACOLoader(dracoLoader);
+		gltfLoader.load('79411a0b66dd198e78f33a311b426187.glb', function (gltf) { //MIND
+		//gltfLoader.load('sense.glb', function (gltf) {
+			senseObj = gltf.scene.children[0];
+			scene.add(gltf.scene);
+			activeGroup.push(senseObj)
+
+			if (gltf.animations.length > 0) {
+				actions = {};
+				mixerA = new THREE.AnimationMixer( gltf.scene );
+				clip = gltf.animations;
+
+				for ( let i = 0; i < clip.length; i ++ ) {
+					const action = mixerA.clipAction( clip[i] );
+					action.setLoop(THREE.LoopOnce);
+					action.clampWhenFinished = true;
+					actions[ clip[i].name ] = action;
+				}
+				activeAction = actions[ 'Idle' ];
+			}
+		});
+		//BG GLTF
+		//gltfLoader.setPath('models/')
+		gltfLoader.setDRACOLoader(dracoLoader);
+		gltfLoader.load('b931e0ee78bca04274b278cf89df1ed1.glb', function (gltf) {
+		//gltfLoader.load('env.glb', function (gltf) {
+			scene.add(gltf.scene);
+			env_text = scene.getObjectByName( "hyperText" );
+			env_x = scene.getObjectByName( "env_x" );
+			env_y = scene.getObjectByName( "env_y" );
+			env_z = scene.getObjectByName( "env_z" );
+			env_rota = scene.getObjectByName( "rota" );
+			env_rotb = scene.getObjectByName( "rotb" );
+			env_dots = scene.getObjectByName( "dots" );
+			env_scaler = scene.getObjectByName( "scaler" );
+
+			mixerB = new THREE.AnimationMixer(gltf.scene);
+			gltf.animations.forEach(element => {
+				mixerB.clipAction(element).play()
+			});
+		});
+
+		const pointMaterial = new THREE.MeshStandardMaterial({
+			color: 0xffffff,
+			emissive : 0xff0000
+		});
+	</script>
+</body>
+
+</html>
